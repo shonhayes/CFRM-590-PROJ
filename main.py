@@ -918,23 +918,7 @@ def compute_sharpe(series, rf_series, periods_per_year, year=None):
         return None
     return annualized_sharpe_ratio(subset, rf_series, periods_per_year)
 
-# Collect yearly Sharpe ratios for daily and weekly series
-years = sorted(
-    set(optimal_returns_df.index.year)
-    | set(cvar_returns_df.index.year)
-    | set(weekly_optimal_returns_df.index.year)
-    | set(weekly_cvar_returns_df.index.year)
-)
-
 rows = []
-for yr in years:
-    rows.append({
-        'year': yr,
-        'daily_mv': compute_sharpe(optimal_returns_df['optimal_returns'], risk_free_daily, 252, yr),
-        'daily_cvar': compute_sharpe(cvar_returns_df['cvar_returns'], risk_free_daily, 252, yr),
-        'weekly_mv': compute_sharpe(weekly_optimal_returns_df['weekly_optimal_returns'], risk_free_weekly, 52, yr),
-        'weekly_cvar': compute_sharpe(weekly_cvar_returns_df['weekly_cvar_returns'], risk_free_weekly, 52, yr),
-    })
 
 # Add overall Sharpe ratios as final row
 rows.append({
