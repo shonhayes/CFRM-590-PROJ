@@ -47,8 +47,8 @@ assets = ["ACWI", "EFA", "VTI", "VNQ", "AGG", "BIL", "HYG", "GSG"]
 # Convert to decimal cost per $ traded
 trading_costs_array = np.array([(1+trading_costs_bps[t] / 10000)**(1/252)-1 for t in assets])
 
-# Download price history
-price_data = yf.download(list(tickers.values()), start="2000-01-01")
+# Download price history (cap data before Nov 1, 2025)
+price_data = yf.download(list(tickers.values()), start="2000-01-01", end="2025-11-01")
 
 # Handle different yfinance data structures
 if isinstance(price_data.columns, pd.MultiIndex):
@@ -76,8 +76,9 @@ else:
 # Rename columns to match index names
 price_data = price_data.rename(columns={v: k for k, v in tickers.items()})
 
-# Compute daily returns
+# Compute daily returns and cap to data before Nov 1, 2025
 returns = price_data.pct_change().dropna()
+returns = returns.loc[: "2025-10-31"]
 
 # Convert annual expense ratios to daily expense ratios and subtract from returns
 # Daily expense ratio = (1 + annual_expense_ratio)^(1/252) - 1
@@ -102,8 +103,9 @@ portfolio_start_date = most_recent_start + pd.DateOffset(years=5)
 # Filter returns data to start from the calculated date
 portfolio_returns_data = returns.loc[portfolio_start_date:]
 
+print("="*80)
 print(f"Portfolio returns data shape: {portfolio_returns_data.shape}")
-print(f"Date range: {portfolio_returns_data.index[0]} to {portfolio_returns_data.index[-1]}")
+print(f"Date range: {most_recent_start} to {portfolio_returns_data.index[-1]}")
 
 # Calculate 60% ACWI + 40% US AGG portfolio returns
 acwi_weight = 0.60
@@ -124,7 +126,6 @@ start_year = five_years_later.year
 end_year = latest_end.year
 
 # Initialize DataFrames to store all portfolio returns
-benchmark_returns_df = pd.DataFrame()
 optimal_returns_df = pd.DataFrame()
 cvar_returns_df = pd.DataFrame()
 
@@ -154,7 +155,7 @@ for year in range(start_year, end_year + 1):
     window_portfolio_returns = (acwi_weight * window_returns['MSCI_ACWI_IMI'] + 
                                 agg_weight * window_returns['Bloomberg_US_Agg'])
     
-    geometric_daily_return_bench = (1 + window_portfolio_returns).prod() ** (1 / len(window_portfolio_returns)) - 1
+    reference_geometric_daily_return = (1 + window_portfolio_returns).prod() ** (1 / len(window_portfolio_returns)) - 1
     
     # Calculate mean-variance optimal portfolio weights using geometric daily return as target
 
@@ -162,7 +163,7 @@ for year in range(start_year, end_year + 1):
         # Mean-Variance optimization
         optimal_weights, portfolio_return, portfolio_volatility = mean_variance_optimization(
             returns_df=window_returns,
-            target_return=geometric_daily_return_bench+0.00005,
+            target_return=reference_geometric_daily_return+0.00005,
             allow_short_selling=False,  # No short selling
             max_weight=1.0,  # No maximum weight constraint
             min_weight=0.0,
@@ -172,7 +173,7 @@ for year in range(start_year, end_year + 1):
         # Mean-CVaR optimization
         cvar_weights, cvar_portfolio_return, cvar_value = mean_cvar_optimization(
             returns_df=window_returns,
-            target_return=geometric_daily_return_bench+0.00005,
+            target_return=reference_geometric_daily_return+0.00005,
             confidence_level=0.95,
             allow_short_selling=False,  # No short selling
             max_weight=1.0,  # No maximum weight constraint
@@ -183,7 +184,7 @@ for year in range(start_year, end_year + 1):
         # Mean-Variance optimization
         optimal_weights, portfolio_return, portfolio_volatility = mean_variance_optimization(
             returns_df=window_returns,
-            target_return=geometric_daily_return_bench+(1 + 0.02)**(1/252)-1,
+            target_return=reference_geometric_daily_return+(1 + 0.02)**(1/252)-1,
             allow_short_selling=False,  # No short selling
             max_weight=1.0,  # No maximum weight constraint
             min_weight=0.0, 
@@ -194,7 +195,7 @@ for year in range(start_year, end_year + 1):
         # Mean-CVaR optimization
         cvar_weights, cvar_portfolio_return, cvar_value = mean_cvar_optimization(
             returns_df=window_returns,
-            target_return=geometric_daily_return_bench+(1 + 0.02)**(1/252)-1,
+            target_return=reference_geometric_daily_return+(1 + 0.02)**(1/252)-1,
             confidence_level=0.95,
             allow_short_selling=False,  # No short selling
             max_weight=1.0,  # No maximum weight constraint
@@ -228,9 +229,6 @@ for year in range(start_year, end_year + 1):
     
     # Get the out-of-sample data
     out_of_sample_returns = returns.loc[next_year_start:next_year_end]
-    # Calculate benchmark portfolio returns out-of-sample (60% ACWI + 40% AGG)
-    benchmark_out_of_sample = (acwi_weight * out_of_sample_returns['MSCI_ACWI_IMI'] + 
-                                agg_weight * out_of_sample_returns['Bloomberg_US_Agg'])
     
     # Calculate mean-variance optimal portfolio returns out-of-sample (keep as pandas Series with date index)
     optimal_out_of_sample = pd.Series(
@@ -247,11 +245,6 @@ for year in range(start_year, end_year + 1):
     )
     
     # Store returns in DataFrames (concatenate to existing data)
-    if benchmark_returns_df.empty:
-        benchmark_returns_df = pd.DataFrame(benchmark_out_of_sample, columns=['benchmark_returns'])
-    else:
-        benchmark_returns_df = pd.concat([benchmark_returns_df, pd.DataFrame(benchmark_out_of_sample, columns=['benchmark_returns'])])
-    
     if optimal_returns_df.empty:
         optimal_returns_df = pd.DataFrame(optimal_out_of_sample, columns=['optimal_returns'])
     else:
@@ -264,8 +257,9 @@ for year in range(start_year, end_year + 1):
 
 
 # Get the date range from our portfolio data
-start_date = benchmark_returns_df.index[0].strftime('%Y-%m-%d')
-end_date = benchmark_returns_df.index[-1].strftime('%Y-%m-%d')
+portfolio_index = optimal_returns_df.index.union(cvar_returns_df.index)
+start_date = portfolio_index[0].strftime('%Y-%m-%d')
+end_date = portfolio_index[-1].strftime('%Y-%m-%d')
 
 # Fetch DTB3 (3-Month Treasury Bill) from FRED
 risk_free_rate = pdr.get_data_fred('DTB3', start=start_date, end=end_date)
@@ -276,7 +270,7 @@ risk_free_daily = (1 + risk_free_rate / 100) ** (1/252) - 1
 
 
 # Align risk-free rate with portfolio data
-risk_free_aligned = risk_free_daily.reindex(benchmark_returns_df.index, method='ffill').fillna(0)
+risk_free_aligned = risk_free_daily.reindex(portfolio_index, method='ffill').fillna(0)
 
 # Calculate metrics for both portfolios
 def calculate_metrics(returns_series, risk_free_series, name):
@@ -306,31 +300,24 @@ def calculate_metrics(returns_series, risk_free_series, name):
     }
 
 # Calculate metrics for both portfolios
-benchmark_metrics = calculate_metrics(
-    benchmark_returns_df.iloc[:, 0], 
-    risk_free_aligned, 
-    'Benchmark (60% ACWI, 40% AGG)'
-)
-
 optimal_metrics = calculate_metrics(
     optimal_returns_df.iloc[:, 0], 
-    risk_free_aligned, 
+    risk_free_aligned.loc[optimal_returns_df.index], 
     'Mean-Variance Optimal'
 )
 
 cvar_metrics = calculate_metrics(
     cvar_returns_df.iloc[:, 0], 
-    risk_free_aligned, 
+    risk_free_aligned.loc[cvar_returns_df.index], 
     'Mean-CVaR Optimal'
 )
 
 # Create comparison table
-comparison_data = [benchmark_metrics, optimal_metrics, cvar_metrics]
+comparison_data = [optimal_metrics, cvar_metrics]
 comparison_df = pd.DataFrame(comparison_data)
 
-print("="*80)
-print(f"Analysis Period: {benchmark_returns_df.index[0].strftime('%Y-%m-%d')} to {benchmark_returns_df.index[-1].strftime('%Y-%m-%d')}")
-print(f"Total Observations: {len(benchmark_returns_df)}")
+print(f"Analysis Period: {portfolio_index[0].strftime('%Y-%m-%d')} to {portfolio_index[-1].strftime('%Y-%m-%d')}")
+print(f"Total Observations: {len(portfolio_index)}")
 print(f"Risk-Free Rate Source: FRED DTB3 (3-Month Treasury Bill)")
 print()
 
@@ -378,7 +365,7 @@ plt.stackplot(years,
                 alpha=0.8)
 
 # Customize the plot
-plt.title('Optimal Portfolio Composition Over Time', fontsize=16, fontweight='bold')
+plt.title('Daily Mean-Variance Portfolio Over Time', fontsize=16, fontweight='bold')
 plt.xlabel('Year', fontsize=12)
 plt.ylabel('Portfolio Weight', fontsize=12)
 plt.ylim(0, 1)
@@ -404,9 +391,6 @@ plt.show()
 
 # Calculate average weights across all years
 avg_weights = weights_for_plot.mean()
-print(f"\nAverage weights across all years (Mean-Variance):")
-for asset, avg_weight in avg_weights.items():
-    print(f"  {asset}: {avg_weight:.1%}")
 
 # Create stackplot for CVaR portfolio weights
 cvar_weights_for_plot = cvar_weights_df.T
@@ -426,7 +410,7 @@ plt.stackplot(years,
                 alpha=0.8)
 
 # Customize the plot
-plt.title('Mean-CVaR Optimal Portfolio Composition Over Time', fontsize=16, fontweight='bold')
+plt.title('Daily Mean-CVaR Portfolio Over Time', fontsize=16, fontweight='bold')
 plt.xlabel('Year', fontsize=12)
 plt.ylabel('Portfolio Weight', fontsize=12)
 plt.ylim(0, 1)
@@ -452,28 +436,19 @@ plt.show()
 
 # Calculate average weights for CVaR portfolio
 cvar_avg_weights = cvar_weights_for_plot.mean()
-print(f"\nAverage weights across all years (Mean-CVaR):")
-for asset, avg_weight in cvar_avg_weights.items():
-    print(f"  {asset}: {avg_weight:.1%}")
-
-# Create cumulative return plot
-print(f"\n" + "="*80)
-print("CUMULATIVE RETURN COMPARISON")
-print("="*80)
 
 
 # Calculate cumulative returns
-benchmark_cumulative = (1 + benchmark_returns_df['benchmark_returns']).cumprod()
 optimal_cumulative = (1 + optimal_returns_df['optimal_returns']).cumprod()
 cvar_cumulative = (1 + cvar_returns_df['cvar_returns']).cumprod()
 
-
+"""
 plt.figure(figsize=(14, 8))
 
-# Plot both cumulative return series
-plt.plot(benchmark_cumulative.index, benchmark_cumulative.values, 
-            label='Benchmark Portfolio (60% ACWI + 40% AGG)', 
-            linewidth=2, color='#1f77b4', alpha=0.8)
+# Don't think that I need this plot. Leaving it here just in case.
+
+
+# Plot cumulative return series
 plt.plot(optimal_cumulative.index, optimal_cumulative.values, 
             label='Mean-Variance Optimal Portfolio', 
             linewidth=2, color='#ff7f0e', alpha=0.8)
@@ -481,7 +456,7 @@ plt.plot(cvar_cumulative.index, cvar_cumulative.values,
             label='Mean-CVaR Optimal Portfolio', 
             linewidth=2, color='#2ca02c', alpha=0.8)
 
-plt.title('Cumulative Return Comparison: Optimal vs Benchmark Portfolio', 
+plt.title('Cumulative Return Comparison: Optimal Portfolios', 
             fontsize=16, fontweight='bold')
 plt.xlabel('Date', fontsize=12)
 plt.ylabel('Cumulative Return', fontsize=12)
@@ -493,62 +468,15 @@ plt.legend(fontsize=11)
 plt.grid(True, alpha=0.3)
 plt.xticks(rotation=45)
 plt.tight_layout()
-
-# Format y-axis as percentage
-ax = plt.gca()
-ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.1%}'))
-
-plt.legend(fontsize=11)
-plt.grid(True, alpha=0.3)
-plt.xticks(rotation=45)
-plt.tight_layout()
 plt.show()
+"""
 
-# Create annual returns table by calendar year
-print(f"\n" + "="*80)
-print("ANNUAL RETURNS BY CALENDAR YEAR")
-print("="*80)
-
-# Group returns by calendar year and calculate annual returns
-benchmark_annual = benchmark_returns_df.groupby(benchmark_returns_df.index.year)['benchmark_returns'].apply(lambda x: (1 + x).prod() - 1)
-optimal_annual = optimal_returns_df.groupby(optimal_returns_df.index.year)['optimal_returns'].apply(lambda x: (1 + x).prod() - 1)
-cvar_annual = cvar_returns_df.groupby(cvar_returns_df.index.year)['cvar_returns'].apply(lambda x: (1 + x).prod() - 1)
-
-# Create a DataFrame for the comparison table
-annual_comparison = pd.DataFrame({
-    'Benchmark Return': benchmark_annual,
-    'Mean-Variance Return': optimal_annual,
-    'Mean-CVaR Return': cvar_annual
-})
-
-# Calculate outperformance
-annual_comparison['MV Outperformance'] = annual_comparison['Mean-Variance Return'] - annual_comparison['Benchmark Return']
-annual_comparison['CVaR Outperformance'] = annual_comparison['Mean-CVaR Return'] - annual_comparison['Benchmark Return']
-
-# Display formatted table
-print(f"{'Year':<8} {'Benchmark':<12} {'Mean-Var':<12} {'Mean-CVaR':<12} {'MV Outperf':<12} {'CVaR Outperf':<12}")
-print("-" * 70)
-
-for year, row in annual_comparison.iterrows():
-    print(f"{year:<8} {row['Benchmark Return']:<12.2%} {row['Mean-Variance Return']:<12.2%} {row['Mean-CVaR Return']:<12.2%} {row['MV Outperformance']:<12.2%} {row['CVaR Outperformance']:<12.2%}")
-
-# Calculate summary statistics
-print(f"\n" + "="*50)
-
-
-# ============================================================================
 # WEEKLY PORTFOLIO OPTIMIZATION
-# ============================================================================
-
-print(f"\n" + "="*80)
-print("WEEKLY PORTFOLIO OPTIMIZATION")
-print("="*80)
 
 # Convert daily returns to weekly returns
 weekly_returns = daily_to_weekly_returns(returns)
 
 # Initialize DataFrames for weekly portfolios
-weekly_benchmark_returns_df = pd.DataFrame()
 weekly_optimal_returns_df = pd.DataFrame()
 weekly_cvar_returns_df = pd.DataFrame()
 
@@ -595,14 +523,14 @@ for year in range(weekly_start_year, weekly_end_year + 1):
                                         agg_weight * weekly_window_returns['Bloomberg_US_Agg'])
     
     # Calculate geometric weekly return as target
-    weekly_geometric_return_bench = (1 + weekly_window_portfolio_returns).prod() ** (1 / len(weekly_window_portfolio_returns)) - 1
+    weekly_reference_geometric_return = (1 + weekly_window_portfolio_returns).prod() ** (1 / len(weekly_window_portfolio_returns)) - 1
 
     # Calculate mean-variance and mean-CVaR optimal portfolio weights using weekly returns
     if weekly_count == 0:
         # Mean-Variance optimization
         weekly_optimal_weights, weekly_port_ret, weekly_port_vol = mean_variance_optimization(
             returns_df=weekly_window_returns,
-            target_return=weekly_geometric_return_bench+0.00005,
+            target_return=weekly_reference_geometric_return+0.00005,
             allow_short_selling=False,
             max_weight=1.0,
             min_weight=0.0,
@@ -612,7 +540,7 @@ for year in range(weekly_start_year, weekly_end_year + 1):
         # Mean-CVaR optimization
         weekly_cvar_weights, weekly_cvar_port_ret, weekly_cvar_value = mean_cvar_optimization(
             returns_df=weekly_window_returns,
-            target_return=weekly_geometric_return_bench+0.00005,
+            target_return=weekly_reference_geometric_return+0.00005,
             confidence_level=0.95,
             allow_short_selling=False,
             max_weight=1.0,
@@ -623,7 +551,7 @@ for year in range(weekly_start_year, weekly_end_year + 1):
         # Mean-Variance optimization
         weekly_optimal_weights, weekly_port_ret, weekly_port_vol = mean_variance_optimization(
             returns_df=weekly_window_returns,
-            target_return=weekly_geometric_return_bench+(1 + 0.02)**(1/52)-1,
+            target_return=weekly_reference_geometric_return+(1 + 0.02)**(1/52)-1,
             allow_short_selling=False,
             max_weight=1.0,
             min_weight=0.0,
@@ -634,7 +562,7 @@ for year in range(weekly_start_year, weekly_end_year + 1):
         # Mean-CVaR optimization
         weekly_cvar_weights, weekly_cvar_port_ret, weekly_cvar_value = mean_cvar_optimization(
             returns_df=weekly_window_returns,
-            target_return=weekly_geometric_return_bench+(1 + 0.02)**(1/52)-1,
+            target_return=weekly_reference_geometric_return+(1 + 0.02)**(1/52)-1,
             confidence_level=0.95,
             allow_short_selling=False,
             max_weight=1.0,
@@ -667,10 +595,6 @@ for year in range(weekly_start_year, weekly_end_year + 1):
     weekly_out_of_sample_returns = weekly_returns.loc[weekly_next_year_start:weekly_next_year_end]
     
     if len(weekly_out_of_sample_returns) > 0:
-        # Calculate benchmark portfolio returns out-of-sample
-        weekly_benchmark_out_of_sample = (acwi_weight * weekly_out_of_sample_returns['MSCI_ACWI_IMI'] + 
-                                            agg_weight * weekly_out_of_sample_returns['Bloomberg_US_Agg'])
-        
         # Calculate mean-variance optimal portfolio returns out-of-sample
         weekly_optimal_out_of_sample = pd.Series(
             np.sum(weekly_optimal_weights * weekly_out_of_sample_returns.values, axis=1),
@@ -686,11 +610,6 @@ for year in range(weekly_start_year, weekly_end_year + 1):
         )
         
         # Store returns in DataFrames
-        if weekly_benchmark_returns_df.empty:
-            weekly_benchmark_returns_df = pd.DataFrame(weekly_benchmark_out_of_sample, columns=['weekly_benchmark_returns'])
-        else:
-            weekly_benchmark_returns_df = pd.concat([weekly_benchmark_returns_df, pd.DataFrame(weekly_benchmark_out_of_sample, columns=['weekly_benchmark_returns'])])
-        
         if weekly_optimal_returns_df.empty:
             weekly_optimal_returns_df = pd.DataFrame(weekly_optimal_out_of_sample, columns=['weekly_optimal_returns'])
         else:
@@ -719,7 +638,7 @@ plt.stackplot(years,
                 alpha=0.8)
 
 # Customize the plot
-plt.title('Weekly Data: Mean-Variance Optimal Portfolio Composition Over Time', fontsize=16, fontweight='bold')
+plt.title('Weekly Mean-Variance Portfolio Over Time', fontsize=16, fontweight='bold')
 plt.xlabel('Year', fontsize=12)
 plt.ylabel('Portfolio Weight', fontsize=12)
 plt.ylim(0, 1)
@@ -745,9 +664,6 @@ plt.show()
 
 # Calculate average weights for weekly mean-variance portfolio
 weekly_avg_weights = weekly_weights_for_plot.mean()
-print(f"\nAverage weights across all years (Weekly Mean-Variance):")
-for asset, avg_weight in weekly_avg_weights.items():
-    print(f"  {asset}: {avg_weight:.1%}")
 
 # Create stackplot for weekly mean-CVaR portfolio weights
 weekly_cvar_weights_for_plot = weekly_cvar_weights_df.T
@@ -767,7 +683,7 @@ plt.stackplot(years,
                 alpha=0.8)
 
 # Customize the plot
-plt.title('Weekly Data: Mean-CVaR Optimal Portfolio Composition Over Time', fontsize=16, fontweight='bold')
+plt.title('Weekly Mean-CVaR Portfolio Over Time', fontsize=16, fontweight='bold')
 plt.xlabel('Year', fontsize=12)
 plt.ylabel('Portfolio Weight', fontsize=12)
 plt.ylim(0, 1)
@@ -793,9 +709,31 @@ plt.show()
 
 # Calculate average weights for weekly mean-CVaR portfolio
 weekly_cvar_avg_weights = weekly_cvar_weights_for_plot.mean()
-print(f"\nAverage weights across all years (Weekly Mean-CVaR):")
-for asset, avg_weight in weekly_cvar_avg_weights.items():
-    print(f"  {asset}: {avg_weight:.1%}")
+
+# Consolidated average weight table
+all_assets = (avg_weights.index
+              .union(cvar_avg_weights.index)
+              .union(weekly_avg_weights.index)
+              .union(weekly_cvar_avg_weights.index))
+
+weight_summary = pd.DataFrame({
+    'Daily Mean-Variance': avg_weights,
+    'Daily Mean-CVaR': cvar_avg_weights,
+    'Weekly Mean-Variance': weekly_avg_weights,
+    'Weekly Mean-CVaR': weekly_cvar_avg_weights,
+}).reindex(all_assets).fillna(0)
+
+print(f"\n" + "="*80)
+print("AVERAGE WEIGHTS ACROSS ALL YEARS")
+print("="*80)
+print(f"{'Asset':<18} {'Daily MV':>12} {'Daily CVaR':>12} {'Weekly MV':>12} {'Weekly CVaR':>12}")
+print("-" * 70)
+for asset, row in weight_summary.iterrows():
+    print(f"{asset:<18} "
+          f"{row['Daily Mean-Variance']:>12.1%} "
+          f"{row['Daily Mean-CVaR']:>12.1%} "
+          f"{row['Weekly Mean-Variance']:>12.1%} "
+          f"{row['Weekly Mean-CVaR']:>12.1%}")
 
 # ============================================================================
 # WEIGHT DIFFERENCE STACKPLOTS
@@ -821,8 +759,6 @@ weekly_weights_common = weekly_weights_plot.loc[common_years]
 mv_weight_diff = weekly_weights_common - daily_weights_common
 
 print(f"\nMean-Variance Weight Differences (Weekly - Daily):")
-print(f"Shape: {mv_weight_diff.shape}")
-print(f"Years: {list(common_years)}")
 
 # Create bar chart for mean-variance weight differences
 plt.figure(figsize=(14, 8))
@@ -872,14 +808,19 @@ plt.tight_layout()
 
 plt.show()
 
-# Print summary statistics for mean-variance differences
+# Print summary statistics for mean-variance differences in table form
+mv_stats = pd.DataFrame({
+    'Mean': mv_weight_diff.mean(),
+    'Max': mv_weight_diff.max(),
+    'Min': mv_weight_diff.min(),
+    'MAD': np.abs(mv_weight_diff).mean()
+})
+
 print("\nMean-Variance Weight Change Statistics:")
-for asset in mv_weight_diff.columns:
-    mean_change = mv_weight_diff[asset].mean()
-    max_change = mv_weight_diff[asset].max()
-    min_change = mv_weight_diff[asset].min()
-    mad = np.abs(mv_weight_diff[asset]).mean()  # Mean Absolute Deviation
-    print(f"  {asset}: Mean={mean_change:+.2%}, Max={max_change:+.2%}, Min={min_change:+.2%}, MAD={mad:.2%}")
+print(f"{'Asset':<18} {'Mean':>12} {'Max':>12} {'Min':>12} {'MAD':>12}")
+print("-" * 78)
+for asset, row in mv_stats.iterrows():
+    print(f"{asset:<18} {row['Mean']:+12.2%} {row['Max']:+12.2%} {row['Min']:+12.2%} {row['MAD']:>12.2%}")
 
 # Calculate differences between weekly and daily mean-CVaR weights
 daily_cvar_weights_plot = cvar_weights_df.T
@@ -896,8 +837,6 @@ weekly_cvar_weights_common = weekly_cvar_weights_plot.loc[common_years_cvar]
 cvar_weight_diff = weekly_cvar_weights_common - daily_cvar_weights_common
 
 print(f"\nMean-CVaR Weight Differences (Weekly - Daily):")
-print(f"Shape: {cvar_weight_diff.shape}")
-print(f"Years: {list(common_years_cvar)}")
 
 # Create bar chart for mean-CVaR weight differences
 plt.figure(figsize=(14, 8))
@@ -939,11 +878,75 @@ plt.tight_layout()
 
 plt.show()
 
-# Print summary statistics for mean-CVaR differences
+# Print summary statistics for mean-CVaR differences in table form
+cvar_stats = pd.DataFrame({
+    'Mean': cvar_weight_diff.mean(),
+    'Max': cvar_weight_diff.max(),
+    'Min': cvar_weight_diff.min(),
+    'MAD': np.abs(cvar_weight_diff).mean()
+})
+
 print("\nMean-CVaR Weight Change Statistics:")
-for asset in cvar_weight_diff.columns:
-    mean_change = cvar_weight_diff[asset].mean()
-    max_change = cvar_weight_diff[asset].max()
-    min_change = cvar_weight_diff[asset].min()
-    mad = np.abs(cvar_weight_diff[asset]).mean()  # Mean Absolute Deviation
-    print(f"  {asset}: Mean={mean_change:+.2%}, Max={max_change:+.2%}, Min={min_change:+.2%}, MAD={mad:.2%}")
+print(f"{'Asset':<18} {'Mean':>12} {'Max':>12} {'Min':>12} {'MAD':>12}")
+print("-" * 78)
+for asset, row in cvar_stats.iterrows():
+    print(f"{asset:<18} {row['Mean']:+12.2%} {row['Max']:+12.2%} {row['Min']:+12.2%} {row['MAD']:>12.2%}")
+
+# ============================================================================
+# SHARPE RATIO SUMMARY
+# ============================================================================
+
+def annualized_sharpe_ratio(returns_series, risk_free_series, periods_per_year):
+    """Compute annualized Sharpe ratio with aligned risk-free series."""
+    aligned_rf = risk_free_series.reindex(returns_series.index, method='ffill').fillna(0)
+    excess_returns = returns_series - aligned_rf
+    return (excess_returns.mean() * periods_per_year) / (excess_returns.std() * np.sqrt(periods_per_year))
+
+# Build a weekly risk-free return series to match weekly portfolios
+risk_free_weekly = daily_to_weekly_returns(risk_free_daily.to_frame('risk_free'))['risk_free']
+
+def compute_sharpe(series, rf_series, periods_per_year, year=None):
+    """Compute annualized Sharpe for full series or a specific calendar year."""
+    subset = series if year is None else series[series.index.year == year]
+    if subset.empty:
+        return None
+    return annualized_sharpe_ratio(subset, rf_series, periods_per_year)
+
+# Collect yearly Sharpe ratios for daily and weekly series
+years = sorted(
+    set(optimal_returns_df.index.year)
+    | set(cvar_returns_df.index.year)
+    | set(weekly_optimal_returns_df.index.year)
+    | set(weekly_cvar_returns_df.index.year)
+)
+
+rows = []
+for yr in years:
+    rows.append({
+        'year': yr,
+        'daily_mv': compute_sharpe(optimal_returns_df['optimal_returns'], risk_free_daily, 252, yr),
+        'daily_cvar': compute_sharpe(cvar_returns_df['cvar_returns'], risk_free_daily, 252, yr),
+        'weekly_mv': compute_sharpe(weekly_optimal_returns_df['weekly_optimal_returns'], risk_free_weekly, 52, yr),
+        'weekly_cvar': compute_sharpe(weekly_cvar_returns_df['weekly_cvar_returns'], risk_free_weekly, 52, yr),
+    })
+
+# Add overall Sharpe ratios as final row
+rows.append({
+    'year': 'All',
+    'daily_mv': compute_sharpe(optimal_returns_df['optimal_returns'], risk_free_daily, 252),
+    'daily_cvar': compute_sharpe(cvar_returns_df['cvar_returns'], risk_free_daily, 252),
+    'weekly_mv': compute_sharpe(weekly_optimal_returns_df['weekly_optimal_returns'], risk_free_weekly, 52),
+    'weekly_cvar': compute_sharpe(weekly_cvar_returns_df['weekly_cvar_returns'], risk_free_weekly, 52),
+})
+
+def fmt(val):
+    return f"{val:.2f}" if val is not None else "NA"
+
+print(f"\n" + "="*80)
+print("ANNUALIZED SHARPE RATIOS (BY YEAR)")
+print("="*80)
+print(f"{'Year':<8} {'Daily MV':<12} {'Daily CVaR':<12} {'Weekly MV':<12} {'Weekly CVaR':<12}")
+print("-" * 60)
+for row in rows:
+    print(f"{str(row['year']):<8} {fmt(row['daily_mv']):<12} {fmt(row['daily_cvar']):<12} "
+          f"{fmt(row['weekly_mv']):<12} {fmt(row['weekly_cvar']):<12}")
