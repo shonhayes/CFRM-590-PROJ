@@ -6,6 +6,10 @@ from returns_aggregation import daily_to_weekly_returns
 import pandas_datareader as pdr
 from datetime import datetime
 import matplotlib.pyplot as plt
+import random
+
+# Just in case for the convex optimization
+random.seed(590)
 
 # ETF tickers and labels (excluding AGGG and IEMG)
 tickers = {
@@ -355,8 +359,8 @@ plt.figure(figsize=(14, 8))
 # Get the color list in the same order as the DataFrame columns
 asset_colors = [colors.get(asset, '#000000') for asset in weights_for_plot.columns]
 
-# Create the stackplot with proper x-axis handling
-years = weights_for_plot.index.values
+# Create the stackplot with proper x-axis handling (shifted +1 year)
+years = weights_for_plot.index.values + 1
 
 plt.stackplot(years, 
                 *[weights_for_plot[asset] for asset in weights_for_plot.columns],
@@ -400,8 +404,8 @@ plt.figure(figsize=(14, 8))
 # Get the color list in the same order as the DataFrame columns
 asset_colors = [colors.get(asset, '#000000') for asset in cvar_weights_for_plot.columns]
 
-# Create the stackplot with proper x-axis handling
-years = cvar_weights_for_plot.index.values
+# Create the stackplot with proper x-axis handling (shifted +1 year)
+years = cvar_weights_for_plot.index.values + 1
 
 plt.stackplot(years, 
                 *[cvar_weights_for_plot[asset] for asset in cvar_weights_for_plot.columns],
@@ -628,8 +632,8 @@ plt.figure(figsize=(14, 8))
 # Get the color list in the same order as the DataFrame columns
 asset_colors = [colors.get(asset, '#000000') for asset in weekly_weights_for_plot.columns]
 
-# Create the stackplot with proper x-axis handling
-years = weekly_weights_for_plot.index.values
+# Create the stackplot with proper x-axis handling (shifted +1 year)
+years = weekly_weights_for_plot.index.values + 1
 
 plt.stackplot(years, 
                 *[weekly_weights_for_plot[asset] for asset in weekly_weights_for_plot.columns],
@@ -673,8 +677,8 @@ plt.figure(figsize=(14, 8))
 # Get the color list in the same order as the DataFrame columns
 asset_colors = [colors.get(asset, '#000000') for asset in weekly_cvar_weights_for_plot.columns]
 
-# Create the stackplot with proper x-axis handling
-years = weekly_cvar_weights_for_plot.index.values
+# Create the stackplot with proper x-axis handling (shifted +1 year)
+years = weekly_cvar_weights_for_plot.index.values + 1
 
 plt.stackplot(years, 
                 *[weekly_cvar_weights_for_plot[asset] for asset in weekly_cvar_weights_for_plot.columns],
@@ -772,6 +776,7 @@ mv_diff_negative[mv_diff_negative > 0] = 0
 mv_diff_negative = -mv_diff_negative  # Make negative differences positive for stacking
 
 years = mv_weight_diff.index.values
+display_years = years + 1
 x_pos = np.arange(len(years))
 width = 0.1
 
@@ -792,7 +797,7 @@ plt.ylabel('Weight Difference', fontsize=12)
 # Set x-axis
 ax = plt.gca()
 ax.set_xticks(x_pos + width * 3.5)  # Center the tick labels
-ax.set_xticklabels(years, rotation=45)
+ax.set_xticklabels(display_years, rotation=45)
 
 # Add a horizontal line at zero
 plt.axhline(y=0, color='black', linestyle='-', linewidth=1.0)
@@ -842,6 +847,7 @@ print(f"\nMean-CVaR Weight Differences (Weekly - Daily):")
 plt.figure(figsize=(14, 8))
 
 years_cvar = cvar_weight_diff.index.values
+display_years_cvar = years_cvar + 1
 x_pos_cvar = np.arange(len(years_cvar))
 width = 0.1
 
@@ -862,7 +868,7 @@ plt.ylabel('Weight Difference', fontsize=12)
 # Set x-axis
 ax = plt.gca()
 ax.set_xticks(x_pos_cvar + width * 3.5)  # Center the tick labels
-ax.set_xticklabels(years_cvar, rotation=45)
+ax.set_xticklabels(display_years_cvar, rotation=45)
 
 # Add a horizontal line at zero
 plt.axhline(y=0, color='black', linestyle='-', linewidth=1.0)

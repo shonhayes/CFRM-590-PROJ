@@ -61,7 +61,7 @@ def mean_variance_optimization(
     obj = cp.Minimize(cp.quad_form(w, Sigma))
 
     prob = cp.Problem(obj, constraints)
-    prob.solve()
+    prob.solve(verbose=False, solver=cp.SCS, max_iters=10000)
 
     if prob.status in ("optimal", "optimal_inaccurate"):
         w_star = w.value
@@ -155,7 +155,7 @@ def mean_cvar_optimization(
     obj = cp.Minimize(cvar)
 
     prob = cp.Problem(obj, constraints)
-    prob.solve(verbose=False, solver=cp.SCS)
+    prob.solve(verbose=False, solver=cp.SCS, max_iters=10000) # Default max is 2500
 
     if prob.status in ("optimal", "optimal_inaccurate"):
         w_star = w.value
