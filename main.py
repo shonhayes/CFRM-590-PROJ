@@ -933,10 +933,10 @@ def fmt(val):
     return f"{val:.2f}" if val is not None else "NA"
 
 print(f"\n" + "="*80)
-print("ANNUALIZED SHARPE RATIOS (BY YEAR)")
+print("ANNUALIZED SHARPE RATIOS")
 print("="*80)
-print(f"{'Year':<8} {'Daily MV':<12} {'Daily CVaR':<12} {'Weekly MV':<12} {'Weekly CVaR':<12}")
+print(f"{'Daily MV':<12} {'Daily CVaR':<12} {'Weekly MV':<12} {'Weekly CVaR':<12}")
 print("-" * 60)
 for row in rows:
-    print(f"{str(row['year']):<8} {fmt(row['daily_mv']):<12} {fmt(row['daily_cvar']):<12} "
+    print(f"{fmt(row['daily_mv']):<12} {fmt(row['daily_cvar']):<12} "
           f"{fmt(row['weekly_mv']):<12} {fmt(row['weekly_cvar']):<12}")
